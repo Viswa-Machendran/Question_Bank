@@ -2386,7 +2386,27 @@ function renderFtHistory(){
 
 // ── STORAGE ──
 function loadAttempts(){return JSON.parse(localStorage.getItem('ssc_attempts')||'[]');}
-function saveAttempt(data){const a=loadAttempts();a.unshift(data);if(a.length>200)a.pop();localStorage.setItem('ssc_attempts',JSON.stringify(a));updateSBStats();}
+function saveAttempt(data){
+  const a=loadAttempts();
+  a.unshift(data);
+  // Removed 200 attempt limit - keep all attempts
+  try{
+    localStorage.setItem('ssc_attempts',JSON.stringify(a));
+    updateSBStats();
+  }catch(e){
+    // If storage quota exceeded, try removing oldest attempts
+    console.error('Storage quota exceeded, removing oldest attempts');
+    while(a.length>100&&e){
+      a.pop();
+      try{
+        localStorage.setItem('ssc_attempts',JSON.stringify(a));
+        e=null; // Success
+        updateSBStats();
+        toast('⚠️ Storage limit reached - oldest attempts removed');
+      }catch(err){e=err;}
+    }
+  }
+}
 function updateSBStats(){
   const a=loadAttempts();document.getElementById('sbAttempts').textContent=a.length;
   if(a.length){const best=Math.max(...a.map(x=>x.pct));document.getElementById('sbBest').textContent=best+'%';document.getElementById('tbBest').style.display='';document.getElementById('tbBestVal').textContent=best+'%';}
@@ -2985,35 +3005,54 @@ function addToCollection(qid){
 
 // ── UPDATE exportProg to include all new data ──
 function exportProg(){
-  const data={
-    attempts:loadAttempts(),
-    bookmarks:{saved:[...loadBk().saved],marked:[...loadBk().marked]},
-    timerSessions:JSON.parse(localStorage.getItem('ssc_ft_sessions')||'[]'),
-    spacedRepetition:loadSR(),
-    notes:loadNotes(),
-    difficulties:loadDiffs(),
-    collections:loadCollections(),
-    dailyGoal:localStorage.getItem('ssc_daily_goal')||'25',
-    exported:new Date().toISOString(),
-    version:'v3'
-  };
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='ssc_cgl_2025_progress_v3.json';a.click();toast('Exported!');
+  try{
+    const data={
+      attempts:loadAttempts(),
+      bookmarks:{saved:[...loadBk().saved],marked:[...loadBk().marked]},
+      timerSessions:JSON.parse(localStorage.getItem('ssc_ft_sessions')||'[]'),
+      spacedRepetition:loadSR(),
+      notes:loadNotes(),
+      difficulties:loadDiffs(),
+      collections:loadCollections(),
+      flags:loadFlags(),
+      dailyGoal:localStorage.getItem('ssc_daily_goal')||'25',
+      exported:new Date().toISOString(),
+      version:'v3.1'
+    };
+    const json=JSON.stringify(data,null,2);
+    const blob=new Blob([json],{type:'application/json'});
+    const sizeMB=(blob.size/(1024*1024)).toFixed(2);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='ssc_cgl_2025_progress_v3.1.json';
+    a.click();
+    toast(`✅ Exported! (${data.attempts.length} attempts, ${sizeMB}MB)`);
+  }catch(e){
+    console.error('Export failed:',e);
+    toast('❌ Export failed - check console for details');
+  }
 }
 function importProg(e){
   const file=e.target.files[0];if(!file)return;
   const r=new FileReader();r.onload=ev=>{try{
     const d=JSON.parse(ev.target.result);
-    if(d.attempts)localStorage.setItem('ssc_attempts',JSON.stringify(d.attempts));
-    if(d.bookmarks)localStorage.setItem('ssc_bk',JSON.stringify(d.bookmarks));
-    if(d.timerSessions)localStorage.setItem('ssc_ft_sessions',JSON.stringify(d.timerSessions));
-    if(d.spacedRepetition)localStorage.setItem('ssc_sr',JSON.stringify(d.spacedRepetition));
-    if(d.notes)localStorage.setItem('ssc_notes',JSON.stringify(d.notes));
-    if(d.difficulties)localStorage.setItem('ssc_diffs',JSON.stringify(d.difficulties));
-    if(d.collections)localStorage.setItem('ssc_collections',JSON.stringify(d.collections));
-    if(d.dailyGoal)localStorage.setItem('ssc_daily_goal',d.dailyGoal);
-    updateSBStats();updateBkUI();toast(`Imported ${(d.attempts||[]).length} attempts + all progress!`);
+    let imported=[];
+    if(d.attempts){localStorage.setItem('ssc_attempts',JSON.stringify(d.attempts));imported.push(`${d.attempts.length} attempts`);}
+    if(d.bookmarks){localStorage.setItem('ssc_bk',JSON.stringify(d.bookmarks));imported.push('bookmarks');}
+    if(d.timerSessions){localStorage.setItem('ssc_ft_sessions',JSON.stringify(d.timerSessions));imported.push('timer sessions');}
+    if(d.spacedRepetition){localStorage.setItem('ssc_sr',JSON.stringify(d.spacedRepetition));imported.push('spaced repetition');}
+    if(d.notes){localStorage.setItem('ssc_notes',JSON.stringify(d.notes));imported.push('notes');}
+    if(d.difficulties){localStorage.setItem('ssc_diffs',JSON.stringify(d.difficulties));imported.push('difficulties');}
+    if(d.collections){localStorage.setItem('ssc_collections',JSON.stringify(d.collections));imported.push('collections');}
+    if(d.flags){localStorage.setItem('ssc_flags',JSON.stringify(d.flags));imported.push('flags');}
+    if(d.dailyGoal){localStorage.setItem('ssc_daily_goal',d.dailyGoal);imported.push('daily goal');}
+    updateSBStats();updateBkUI();
+    toast(`✅ Imported: ${imported.join(', ')}`);
     if(document.getElementById('pg-myprogress').classList.contains('on'))initProg();
-  }catch{toast('Invalid file');}};r.readAsText(file);
+  }catch(err){
+    console.error('Import failed:',err);
+    toast('❌ Import failed - invalid file or corrupted data');
+  }};r.readAsText(file);
 }
 
 // ── PATCH pickOpt TO SHOW DIFF + SCHEDULE SR ──
